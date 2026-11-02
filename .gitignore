@@ -1,0 +1,10 @@
+weights/
+data/
+runs/
+configs_dataset/
+previas_augmentation/
+__pycache__/
+.venv/
+.idea/
+*.pt
+/deim_dfine.pth

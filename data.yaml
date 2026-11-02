@@ -1,0 +1,17 @@
+# Dataset "data" no formato COCO, mesma estrutura dos datasets do YOLOX:
+#   data/annotations/{train,valid,test}.json
+#   data/{train,valid,test}/images/
+path: data   # pasta "data" no mesmo diretório do projeto (ao lado deste data.yaml)
+train: train/images
+val: valid/images
+test: test/images
+
+annotations:
+  train: annotations/train.json
+  val: annotations/valid.json
+  test: annotations/test.json
+
+nc: 2
+names:
+  0: panela
+  1: remendo
