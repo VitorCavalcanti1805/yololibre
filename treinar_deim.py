@@ -73,6 +73,8 @@ def args():
     g.add_argument("--salvar-a-cada", type=int, default=0, help="guarda weights/epoch_N.pt a cada N épocas (0 = não)")
     g.add_argument("--sem-loss-val", action="store_true", help="não calcula a loss na validação (um pouco mais rápido)")
     g.add_argument("--seed", type=int, default=0)
+    g.add_argument("--amp", choices=["float16", "bfloat16"], default="float16",
+                   help="tipo do AMP; bfloat16 evita NaN/overflow do fp16 (GPUs RTX 30xx ou mais novas)")
     g.add_argument("--sombra", type=float, default=0.5, help="probabilidade da sombra sintética")
 
     g = p.add_argument_group("métricas")
@@ -304,7 +306,7 @@ def treinar(a):
         exist_ok=bool(retomar),       # ao retomar, continua gravando na mesma pasta
         resume=retomar or False,
         amp=True,
-        amp_dtype="float16",          # AMP em fp16 (treino e validações durante o treino)
+        amp_dtype=a.amp,              # AMP em fp16 ou bf16 (treino e validações durante o treino)
         seed=a.seed,
         patience=a.paciencia,
         eval_interval=a.eval_intervalo,
