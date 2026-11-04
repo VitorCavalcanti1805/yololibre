@@ -11,6 +11,7 @@ Treina o **DEIM-S** (DEIM-D-FINE, cerca de 10M de parâmetros) da biblioteca [li
 | arquivo | o que faz |
 |---|---|
 | `treinar_deim.py` | script principal: é ele que você roda |
+| `treinar_deim_l.py` | mesmo treino com o DEIM-L (ver "Treinar o DEIM-L") |
 | `treinador_deim.py` | trainer do DEIM com as métricas extras e o acompanhamento por época |
 | `metricas_deim.py` | cálculo de métricas, gráficos e relatório |
 | `aug_yolox_deim.py` | sombra sintética do YOLOX integrada ao DEIM |
@@ -106,6 +107,18 @@ O padrão é 132 épocas, batch 8 e imagem 640. **Se der erro de memória da GPU
 ```powershell
 python treinar_deim.py --nome s_v1 --pesos pesos/deim_dfine.pth --batch 4
 ```
+
+### Treinar o DEIM-L
+
+O `treinar_deim_l.py` faz o mesmo treino com o **DEIM-L** (backbone HGNetv2-B4, cerca de 31M de parâmetros), partindo do peso oficial `deim_dfine_hgnetv2_l_coco_50e.pth`. Esse arquivo tem 126 MB e não vai para o git (passa do limite de 100 MB do GitHub): copie-o para `pesos/` antes de treinar. As opções são as mesmas do `treinar_deim.py`, só mudam os padrões: batch 4 e experimento `runs/train/deim_l_sombra`.
+
+```powershell
+python treinar_deim_l.py --data C:/Users/voce/Downloads/data --nome l_v1
+python treinar_deim_l.py --nome l_v1 --batch 2      # se faltar memória na GPU
+python treinar_deim_l.py --nome l_v1 --retomar
+```
+
+Numa RTX 4050 de 6 GB, com batch 4, o treino ocupou cerca de 4,7 GB e levou cerca de 7,5 minutos por época em 4221 imagens (as 132 épocas dão quase 17 horas, sem contar as validações).
 
 ### Continuar um treino interrompido
 

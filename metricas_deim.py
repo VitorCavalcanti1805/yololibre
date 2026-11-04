@@ -259,7 +259,7 @@ def avaliar_checkpoint(ckpt: str | Path, data: str, split: str, conf: Sequence[f
     modelo = LibreYOLO(str(ckpt))
     cuda = torch.cuda.is_available()
     cfg = ValidationConfig(data=data, split=split, batch_size=batch, imgsz=imgsz, conf_thres=0.001, iou_thres=0.65,
-                           max_det=300, device="cuda" if cuda else "cpu", half=cuda, verbose=False,
+                           max_det=300, device="cuda" if cuda else "cpu", half=cuda, amp_dtype="float16", verbose=False,
                            num_workers=workers, save_dir=str(salvar_em) if salvar_em else None)
     v = DetectionValidator(model=modelo, config=cfg)
     v.run()
@@ -363,6 +363,71 @@ def plotar_historico(hist: list[dict[str, float]], pasta: Path, nomes: list[str]
     fig.savefig(pasta / "metricas_por_epoca.png", dpi=130); plt.close(fig)
 
 
+def curvas_total(r: ResultadoAvaliacao) -> Curvas:
+    """Soma as classes em cada limiar (mesmo limiar para todas) -> P/R/F1 do conjunto."""
+    cs = list(r.curvas.values())
+    tp = sum(c.tp for c in cs); n_det = sum(c.n_det for c in cs); n_gt = sum(c.n_gt for c in cs)
+    p = np.where(n_det > 0, tp / np.maximum(n_det, 1), 1.0)
+    rc = tp / max(n_gt, 1)
+    f1 = np.where(p + rc > 0, 2 * p * rc / (p + rc + 1e-12), 0.0)
+    return Curvas(cs[0].confs, p, rc, f1, tp, n_det, n_gt)
+
+
+def plotar_pr_por_limiar(r: ResultadoAvaliacao, pasta: Path, conf: Sequence[float], iou: float = 0.5) -> None:
+    """precision_recall_limiar_<split>.png (P e R no mesmo eixo, por classe e total) e a tabela .csv."""
+    plt = _plt()
+    nomes = list(r.curvas)
+    series = [(n, r.curvas[n], r.por_classe[n]["conf"]) for n in nomes] + [("todas as classes", curvas_total(r), None)]
+    fig, ax = plt.subplots(1, len(series), figsize=(6 * len(series), 5), squeeze=False)
+    for x, (n, c, usado) in zip(ax[0], series):
+        x.plot(c.confs, c.precision, color="C0", lw=2, label="precision")
+        x.plot(c.confs, c.recall, color="C1", lw=2, label="recall")
+        x.plot(c.confs, c.f1, color="C2", lw=1, ls="--", label="F1")
+        i = int(c.f1.argmax())
+        x.plot(c.confs[i], c.f1[i], "o", color="C2", label=f"melhor F1 {c.f1[i]:.3f} (conf {c.confs[i]:.2f})")
+        valido = c.n_det > 0   # acima do maior score não há detecção: a precision não é definida
+        cruz = np.where(valido[:-1] & valido[1:] & (np.diff(np.sign(c.precision - c.recall)) != 0))[0]
+        if len(cruz):
+            j = cruz[0]
+            x.plot(c.confs[j], c.recall[j], "kx", ms=8, label=f"P = R ≈ {c.recall[j]:.3f} (conf {c.confs[j]:.2f})")
+        if usado is not None:
+            k = int(round(usado * 100))
+            x.axvline(usado, color="gray", ls=":", lw=1)
+            x.text(usado + 0.01, 0.03, f"conf {usado:.2f}\nP {c.precision[k]:.3f}\nR {c.recall[k]:.3f}", fontsize=8)
+        x.set(xlabel="limiar de confiança", title=f"{n} ({int(c.n_gt)} objetos)", xlim=(0, 1), ylim=(0, 1.02))
+        x.grid(alpha=0.3); x.legend(fontsize=8, loc="lower left" if usado is None else "center left")
+    fig.suptitle(f"Precision e recall por limiar de confiança ({r.split})")
+    fig.tight_layout(); fig.savefig(pasta / f"precision_recall_limiar_{r.split}.png", dpi=130); plt.close(fig)
+
+    linhas = []
+    for i, cf in enumerate(series[0][1].confs):
+        linha = {"conf": round(float(cf), 2)}
+        for n, c, _ in series:
+            n = n.replace(" ", "_")
+            linha.update({f"P_{n}": float(c.precision[i]), f"R_{n}": float(c.recall[i]), f"F1_{n}": float(c.f1[i]),
+                          f"TP_{n}": int(c.tp[i]), f"FP_{n}": int(c.n_det[i] - c.tp[i]),
+                          f"FN_{n}": int(c.n_gt - c.tp[i])})
+        linhas.append(linha)
+    gravar_csv(linhas, pasta / f"precision_recall_limiar_{r.split}.csv")
+
+    # tabela legível: P e R de cada classe a cada 0,05 de limiar (o limiar usado de cada classe em negrito)
+    cab = " | ".join(f"P {n} | R {n}" for n, _, _ in series)
+    md = [f"# Precision e recall por classe e limiar ({r.split})\n",
+          f"IoU mínimo para acerto: {iou:.2f}. Em negrito, o limiar usado em cada classe "
+          f"({_txt_conf(conf)}).\n", f"| conf | {cab} |", "|---" * (1 + 2 * len(series)) + "|"]
+    for i in range(5, 100, 5):
+        cel = []
+        for n, c, usado in series:
+            p, rc = f"{c.precision[i]:.3f}", f"{c.recall[i]:.3f}"
+            if c.n_det[i] == 0:
+                p = "–"   # nenhuma detecção acima desse limiar
+            if usado is not None and int(round(usado * 100)) == i:
+                p, rc = f"**{p}**", f"**{rc}**"
+            cel += [p, rc]
+        md.append(f"| {c.confs[i]:.2f} | " + " | ".join(cel) + " |")
+    (pasta / f"precision_recall_limiar_{r.split}.md").write_text("\n".join(md) + "\n", encoding="utf-8")
+
+
 def plotar_avaliacao(r: ResultadoAvaliacao, pasta: Path, conf: Sequence[float], iou: float) -> None:
     """pr_<split>.png, confianca_<split>.png, confusao_<split>.png, barras_<split>.png."""
     plt = _plt()
@@ -394,6 +459,9 @@ def plotar_avaliacao(r: ResultadoAvaliacao, pasta: Path, conf: Sequence[float], 
             ax[j].grid(alpha=0.3); ax[j].legend()
         fig.suptitle(f"{r.split}: linhas pontilhadas = limiares usados; ponto = melhor F1")
         fig.tight_layout(); fig.savefig(pasta / f"confianca_{r.split}.png", dpi=130); plt.close(fig)
+
+    if r.curvas:
+        plotar_pr_por_limiar(r, pasta, conf, iou)
 
     # matriz de confusão
     if r.confusao is not None:

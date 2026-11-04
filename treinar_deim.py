@@ -29,23 +29,34 @@ import argparse
 from pathlib import Path
 
 DATA_YAML = "data.yaml"
+# O tamanho do modelo e os padrões abaixo são trocados por treinar_deim_l.py (DEIM-L)
+TAMANHO = "s"            # n, s, m, l ou x
 PESOS = "LibreDEIMs.pt"  # DEIM-S pré-treinado no COCO (baixado automaticamente)
+NOME = "deim_s_sombra"
+BATCH = 8                # RTX 4050 6 GB; baixe para 4 se faltar memória
 EPOCAS = 132             # padrão do DEIM
+DESCRICAO = __doc__
+
+
+def rotulo() -> str:
+    return f"DEIM-{TAMANHO.upper()}"
 
 
 def args():
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = argparse.ArgumentParser(description=DESCRICAO, formatter_class=argparse.RawDescriptionHelpFormatter)
     g = p.add_argument_group("dados e saída")
     g.add_argument("--data", default=DATA_YAML,
                    help="dataset: a PASTA do dataset COCO (ex.: C:/Users/voce/Downloads/data) ou um .yaml "
                         f"(padrão: {DATA_YAML}). Com uma pasta, o yaml é gerado sozinho a partir dos JSONs")
-    g.add_argument("--nome", default="deim_s_sombra", help="subpasta do experimento em --projeto")
+    g.add_argument("--nome", default=NOME, help="subpasta do experimento em --projeto")
     g.add_argument("--projeto", default="runs/train")
     g.add_argument("--sem-teste", action="store_true", help="não avalia o split de teste no fim")
+    g.add_argument("--splits", nargs="+", choices=["val", "test"], default=None,
+                   help="splits da avaliação final (padrão: val e test). Ex.: --splits test")
 
     g = p.add_argument_group("treino")
     g.add_argument("--pesos", default=PESOS,
-                   help=f"checkpoint inicial: '{PESOS}' = DEIM-S do COCO (padrão), 'nenhum' = do zero, ou o caminho "
+                   help=f"checkpoint inicial: '{PESOS}' = {rotulo()} do COCO (padrão), 'nenhum' = do zero, ou o caminho "
                         "de um .pt seu (ex.: runs/train/s_v1/weights/best.pt); a cabeça é refeita se o nº de "
                         "classes não bater")
     g.add_argument("--retomar", nargs="?", const="auto", default=None,
@@ -53,7 +64,7 @@ def args():
                         "ou passe o caminho do last.pt (ignora --pesos)")
     g.add_argument("--epocas", type=int, default=None,
                    help=f"total de épocas (padrão {EPOCAS}, o do DEIM; com --retomar, o do treino original)")
-    g.add_argument("--batch", type=int, default=8)         # RTX 4050 6 GB; baixe para 4 se faltar memória
+    g.add_argument("--batch", type=int, default=BATCH, help=f"padrão {BATCH} (RTX 4050 6 GB)")
     g.add_argument("--imgsz", type=int, default=640)
     g.add_argument("--workers", type=int, default=4)
     g.add_argument("--eval-intervalo", type=int, default=5, help="avalia na validação a cada N épocas (e na última)")
@@ -162,8 +173,8 @@ def checar(a):
     from libreyolo.models.deim.transforms import DEIMMultiScaleCollate, DEIMTrainTransform
 
     aug.SHADOW_PROB = a.sombra
-    m = LibreDEIM(None, size="s", nb_classes=len(nomes_classes(a.data)), device="cpu")
-    print(f"DEIM-S: {sum(p.numel() for p in m.model.parameters()) / 1e6:.2f} M parametros")
+    m = LibreDEIM(None, size=TAMANHO, nb_classes=len(nomes_classes(a.data)), device="cpu")
+    print(f"{rotulo()}: {sum(p.numel() for p in m.model.parameters()) / 1e6:.2f} M parametros")
 
     cfg = load_data_config(a.data)
     preproc = DEIMTrainTransform(max_labels=120, flip_prob=0.5, imgsz=a.imgsz)
@@ -206,7 +217,7 @@ def random_idx(n):
 
 
 def carregar_modelo_inicial(a):
-    """--retomar > --pesos <arquivo> > --pesos nenhum (DEIM-S do zero)."""
+    """--retomar > --pesos <arquivo> > --pesos nenhum (modelo do zero)."""
     from libreyolo import LibreDEIM, LibreYOLO
 
     if a.retomar:
@@ -216,16 +227,17 @@ def carregar_modelo_inicial(a):
         print(f"Retomando de {ckpt}")
         return LibreYOLO(str(ckpt)), str(ckpt)
     if str(a.pesos).lower() in ("nenhum", "none", ""):
-        print("Sem pesos iniciais: DEIM-S treinado do zero")
-        return LibreDEIM(None, size="s", nb_classes=len(nomes_classes(a.data))), None
-    if a.pesos != PESOS and not Path(a.pesos).exists():
+        print(f"Sem pesos iniciais: {rotulo()} treinado do zero")
+        return LibreDEIM(None, size=TAMANHO, nb_classes=len(nomes_classes(a.data))), None
+    existe = Path(a.pesos).exists()
+    if not existe and not a.pesos.startswith("LibreDEIM"):  # LibreDEIM*.pt a libreyolo baixa sozinha
         raise FileNotFoundError(f"--pesos {a.pesos} não existe")
     print(f"Checkpoint inicial: {a.pesos}")
-    if a.pesos != PESOS and not eh_checkpoint_libreyolo(a.pesos):
-        # peso oficial do repositório DEIM (ex.: deim_dfine_hgnetv2_s_coco.pth): a libreyolo não sabe pelo nome
-        # se é DEIM ou D-FINE (mesma arquitetura), então carrega direto como DEIM-S
-        print("  peso fora do formato da libreyolo (repositório oficial do DEIM): carregando como DEIM-S")
-        return LibreDEIM(a.pesos, size="s"), None
+    if existe and not eh_checkpoint_libreyolo(a.pesos):
+        # peso oficial do repositório DEIM (ex.: deim_dfine_hgnetv2_l_coco_50e.pth): a libreyolo não sabe pelo
+        # nome se é DEIM ou D-FINE (mesma arquitetura), então carrega direto como DEIM no tamanho deste script
+        print(f"  peso fora do formato da libreyolo (repositório oficial do DEIM): carregando como {rotulo()}")
+        return LibreDEIM(a.pesos, size=TAMANHO), None
     return LibreYOLO(a.pesos), None  # a cabeça é refeita para as classes do data.yaml se precisar
 
 
@@ -246,7 +258,10 @@ def avaliar_final(a, ckpt: Path, pasta: Path) -> None:
     from libreyolo.data import load_data_config
 
     cfg = load_data_config(a.data)
-    splits = ["val"] + (["test"] if not a.sem_teste and cfg.get("test") else [])
+    splits = a.splits or (["val"] + (["test"] if not a.sem_teste else []))
+    if "test" in splits and not cfg.get("test"):
+        print("Aviso: o dataset não tem split de teste; avaliando só o que existe")
+        splits = [s for s in splits if s != "test"] or ["val"]
     resultados = []
     for s in splits:
         print(f"Avaliando {ckpt} em {s}...")
@@ -289,6 +304,7 @@ def treinar(a):
         exist_ok=bool(retomar),       # ao retomar, continua gravando na mesma pasta
         resume=retomar or False,
         amp=True,
+        amp_dtype="float16",          # AMP em fp16 (treino e validações durante o treino)
         seed=a.seed,
         patience=a.paciencia,
         eval_interval=a.eval_intervalo,
@@ -314,7 +330,7 @@ def somente_avaliar(a):
     avaliar_final(a, Path(a.somente_avaliar), pasta)
 
 
-if __name__ == "__main__":  # obrigatório no Windows por causa dos workers do DataLoader
+def main():
     a = args()
     a.data = resolver_dataset(a.data)
     if a.checar:
@@ -323,3 +339,7 @@ if __name__ == "__main__":  # obrigatório no Windows por causa dos workers do D
         somente_avaliar(a)
     else:
         treinar(a)
+
+
+if __name__ == "__main__":  # obrigatório no Windows por causa dos workers do DataLoader
+    main()

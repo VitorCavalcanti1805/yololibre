@@ -8,3 +8,6 @@ __pycache__/
 .idea/
 *.pt
 /deim_dfine.pth
+
+# peso do DEIM-L oficial (126 MB, acima do limite de 100 MB do GitHub)
+pesos/deim_dfine_hgnetv2_l_coco_50e.pth
